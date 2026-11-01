@@ -556,7 +556,7 @@ return {
 		// a flow ends at the first device of its path that runs tc, such
 		// as an SQM shaper on a VLAN, so list the stacked devices as well
 		for (let zone in this.zones())
-			for (let device in zone.related_physdevs)
+			for (let device in [ ...zone.related_physdevs, ...zone.related_l3devs ])
 				push(devices, ...resolve_lower_devices(devstatus, device, true));
 
 		// devices a zone names directly, such as a bridge of a container runtime
@@ -2138,6 +2138,7 @@ return {
 
 		let match_devices = [];
 		let related_physdevs = [];
+		let related_l3devs = [];
 		let related_subnets = [];
 		let related_ubus_networks = [];
 		let match_subnets, masq_src_subnets, masq_dest_subnets;
@@ -2162,6 +2163,9 @@ return {
 
 				if (net.physdev && !e.invert)
 					push(related_physdevs, net.physdev);
+
+				if (net.device && net.device != net.physdev && !e.invert)
+					push(related_l3devs, net.device);
 
 				push(related_subnets, ...(net.ipaddrs || []));
 			}
@@ -2296,6 +2300,7 @@ return {
 
 		zone.related_subnets = related_subnets;
 		zone.related_physdevs = related_physdevs;
+		zone.related_l3devs = related_l3devs;
 
 		if (zone.masq || zone.masq6)
 			zone.dflags.snat = true;
