@@ -473,7 +473,7 @@ function resolve_offload_port(devname, use_prefix) {
 	return [ devname, `${devname}.sta*` ];
 }
 
-function resolve_lower_devices(devstatus, devname, use_prefix) {
+function resolve_lower_devices(devstatus, devname, use_prefix, stacked) {
 	let dir = fs.opendir(`/sys/class/net/${devname}`);
 	let devs = [];
 
@@ -486,9 +486,12 @@ function resolve_lower_devices(devstatus, devname, use_prefix) {
 		case 'bridge':
 			let e;
 
+			if (stacked)
+				push(devs, devname);
+
 			while ((e = dir.read()) != null)
 				if (index(e, "lower_") === 0)
-					push(devs, ...resolve_lower_devices(devstatus, substr(e, 6), use_prefix));
+					push(devs, ...resolve_lower_devices(devstatus, substr(e, 6), use_prefix, stacked));
 
 			break;
 
@@ -572,20 +575,26 @@ return {
 			bus.disconnect();
 		}
 
-		for (let zone in this.zones())
-			for (let device in zone.related_physdevs)
-				push(devices, ...resolve_lower_devices(devstatus, device, use_prefix));
+		if (this.default_option("flow_offloading_hw")) {
+			for (let zone in this.zones())
+				for (let device in zone.related_physdevs)
+					push(devices, ...resolve_lower_devices(devstatus, device, use_prefix));
 
-		devices = sort(uniq(devices));
+			devices = sort(uniq(devices));
 
-		if (this.default_option("flow_offloading_hw") && length(devices) &&
-		    !nft_try_hw_offload(devices)) {
+			if (!length(devices) || nft_try_hw_offload(devices))
+				return devices;
+
 			this.warn('Hardware flow offloading unavailable, falling back to software offloading');
 			this.state.defaults.flow_offloading_hw = false;
+			devices = [];
 		}
 
-		if (this.default_option("flow_offloading_hw"))
-			return devices;
+		// a flow ends at the first device of its path that runs tc, such
+		// as an SQM shaper on a VLAN, so list the stacked devices as well
+		for (let zone in this.zones())
+			for (let device in zone.related_physdevs)
+				push(devices, ...resolve_lower_devices(devstatus, device, use_prefix, true));
 
 		// devices a zone names directly, such as a bridge of a container
 		// runtime; a wildcard becomes a name prefix, which needs Linux 6.17
@@ -593,7 +602,7 @@ return {
 			for (let device in to_array(zone.device))
 				if (!device.invert && device.device != '+')
 					push(devices, ...(!device.wildcard
-						? resolve_lower_devices(devstatus, device.device, use_prefix)
+						? resolve_lower_devices(devstatus, device.device, use_prefix, true)
 						: use_prefix ? [ device.device ] : []));
 
 		return sort(uniq(devices));
